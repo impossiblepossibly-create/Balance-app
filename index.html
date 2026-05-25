@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Balance · Батуми</title>
+  <meta name="theme-color" content="#FFD600"/>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box;}
+    body{font-family:'Manrope','Segoe UI',sans-serif;}
+    select option{background:#fff;color:#1A1500;}
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel" data-presets="react">
+import { useState, useEffect, useRef } from "react";
+
+// ── ПАЛИТРА ─────────────────────────────────────────────────────────────────
+const Y = "#FFD600";   // основной жёлтый
+const YD = "#F5C800";  // жёлтый тёмнее (hover)
+const BG = "#FFFDF0";  // фон страницы — тёплый белый
+const CARD = "#FFFFFF";
+const BORDER = "#F0E8C0";
+const TEXT = "#1A1500";
+const MUTED = "#9A8E60";
+const RED = "#E53935";
+const GREEN = "#2E7D32";
+const BLUE = "#1565C0";
+const PURPLE = "#7B1FA2";
+
+const STATUSES = {
+  free:      { label: "Свободен",   color: GREEN },
+  delivering:{ label: "В доставке", color: "#E65100" },
+  busy:      { label: "Занят",      color: RED },
+};
+const ORDER_STATUSES = {
+  new:        { label: "Новый",      color: PURPLE },
+  accepted:   { label: "Принят",     color: BLUE },
+  delivering: { label: "В пути",     color: "#E65100" },
+  done:       { label: "Доставлен",  color: GREEN },
+  cancelled:  { label: "Отменён",    color: RED },
+};
+const REST_COLORS = ["#E53935","#7B1FA2","#1565C0","#2E7D32","#E65100","#00838F","#AD1457","#558B2F","#4527A0","#283593"];
+
+const INITIAL_COURIERS = [
+  { id:1, name:"Zhenya", phone:"", avatar:"Z", status:"free", assignments:[] },
+  { id:2, name:"Bachi",  phone:"", avatar:"B", status:"free", assignments:[] },
+];
+const INITIAL_RESTAURANTS = [
+  { id:1, name:"Manufactory",   cuisine:"", address:"", phone:"", color:"#E53935", active:true },
+  { id:2, name:"Sheffpoint",    cuisine:"", address:"", phone:"", color:"#7B1FA2", active:true },
+  { id:3, name:"Cheese Lovers", cuisine:"", address:"", phone:"", color:"#1565C0", active:true },
+  { id:4, name:"BBSh",          cuisine:"", address:"", phone:"", color:"#2E7D32", active:true },
+  { id:5, name:"MANUFACTORY",   cuisine:"", address:"", phone:"", color:"#E65100", active:true },
+  { id:6, name:"SHEFFPOINT",    cuisine:"", address:"", phone:"", color:"#00838F", active:true },
+  { id:7, name:"CHEESE LOVERS", cuisine:"", address:"", phone:"", color:"#AD1457", active:true },
+];
+
+function generateId() { return Date.now() + Math.random(); }
+function timeNow() { return new Date().toLocaleTimeString("ru-RU",{hour:"2-digit",minute:"2-digit"}); }
+
+function playBeep() {
+  try {
+    const ctx = new (window.AudioContext||window.webkitAudioContext)();
+    [0,0.2,0.4].forEach(d=>{
+      const o=ctx.createOscillator(),g=ctx.createGain();
+      o.connect(g);g.connect(ctx.destination);
+      o.frequency.value=880;
+      g.gain.setValueAtTime(0.5,ctx.currentTime+d);
+      g.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+d+0.18);
+      o.start(ctx.currentTime+d);o.stop(ctx.currentTime+d+0.18);
+    });
+  } catch(e){}
+}
+function loadState(k,fb){try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb;}catch{return fb;}}
+function saveState(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch{}}
+
+function useSharedOrders(){
+  const [orders,setOS]=useState(()=>loadState("balance_orders",[]));
+  function setOrders(u){setOS(p=>{const n=typeof u==="function"?u(p):u;saveState("balance_orders",n);return n;});}
+  useEffect(()=>{const iv=setInterval(()=>{const s=loadState("balance_orders",[]);setOS(p=>JSON.stringify(p)!==JSON.stringify(s)?s:p);},1500);return()=>clearInterval(iv);},[]);
+  return [orders,setOrders];
+}
+function useSharedRestaurants(){
+  const [rests,setRS]=useState(()=>loadState("balance_restaurants",INITIAL_RESTAURANTS));
+  function setRestaurants(u){setRS(p=>{const n=typeof u==="function"?u(p):u;saveState("balance_restaurants",n);return n;});}
+  useEffect(()=>{const iv=setInterval(()=>{const s=loadState("balance_restaurants",INITIAL_RESTAURANTS);setRS(p=>JSON.stringify(p)!==JSON.stringify(s)?s:p);},3000);return()=>clearInterval(iv);},[]);
+  return [rests,setRestaurants];
+}
+
+// ── РОУТЕР ──────────────────────────────────────────────────────────────────
+export default function App(){
+  const [route,setRoute]=useState(()=>window.location.hash||"#courier");
+  useEffect(()=>{const h=()=>setRoute(window.location.hash||"#courier");window.addEventListener("hashchange",h);return()=>window.removeEventListener("hashchange",h);},[]);
+  if(route==="#restaurant") return <RestaurantApp/>;
+  return <CourierApp/>;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// КУРЬЕРСКАЯ ПАНЕЛЬ
+// ══════════════════════════════════════════════════════════════════════════════
+function CourierApp(){
+  const [orders,setOrders]=useSharedOrders();
+  const [restaurants,setRestaurants]=useSharedRestaurants();
+  const [couriers,setCouriers]=useState(()=>loadState("balance_couriers",INITIAL_COURIERS));
+  const [tab,setTab]=useState("dashboard");
+  const prevNew=useRef(0);
+  const [flash,setFlash]=useState(null);
+
+  const [showAddRest,setShowAddRest]=useState(false);
+  const [showAddCourier,setShowAddCourier]=useState(false);
+  const [showAssign,setShowAssign]=useState(null);
+  const [showAddOrder,setShowAddOrder]=useState(false);
+  const [showEditOrder,setShowEditOrder]=useState(null);
+  const [showEditRest,setShowEditRest]=useState(null);
+
+  const [nRest,setNRest]=useState({name:"",cuisine:"",address:"",phone:""});
+  const [nCourier,setNCourier]=useState({name:"",phone:""});
+  const [nOrder,setNOrder]=useState({clientPhone:"",clientAddress:"",restId:"",courierId:"",note:""});
+
+  const activeRests=restaurants.filter(r=>r.active);
+  const activeOrders=orders.filter(o=>o.status!=="done"&&o.status!=="cancelled");
+  const newOrders=orders.filter(o=>o.status==="new");
+
+  useEffect(()=>{saveState("balance_couriers",couriers);},[couriers]);
+  useEffect(()=>{
+    const cur=newOrders.length;
+    if(cur>prevNew.current){playBeep();sf("🔔 Новый заказ от ресторана!");}
+    prevNew.current=cur;
+  },[orders]);
+
+  function sf(msg){setFlash(msg);setTimeout(()=>setFlash(null),3000);}
+
+  // Рестораны
+  function addRest(){
+    if(!nRest.name.trim())return;
+    if(activeRests.length>=10){sf("Максимум 10 ресторанов!");return;}
+    setRestaurants(p=>[...p,{id:generateId(),...nRest,color:REST_COLORS[p.length%REST_COLORS.length],active:true}]);
+    setNRest({name:"",cuisine:"",address:"",phone:""});setShowAddRest(false);sf("Ресторан добавлен ✓");
+  }
+  function removeRest(id){
+    setRestaurants(p=>p.filter(r=>r.id!==id));
+    setCouriers(p=>p.map(c=>{const a=c.assignments.filter(x=>x.restId!==id);return{...c,assignments:a,status:a.length===0?"free":c.status};}));
+    sf("Ресторан удалён");
+  }
+  function updateRest(id,fields){setRestaurants(p=>p.map(r=>r.id===id?{...r,...fields}:r));}
+
+  // Курьеры
+  function addCourier(){
+    if(!nCourier.name.trim())return;
+    const av=nCourier.name.trim().split(" ").map(w=>w[0]).join("").toUpperCase().slice(0,2);
+    setCouriers(p=>[...p,{id:generateId(),...nCourier,avatar:av,status:"free",assignments:[]}]);
+    setNCourier({name:"",phone:""});setShowAddCourier(false);sf("Курьер добавлен ✓");
+  }
+  function removeCourier(id){setCouriers(p=>p.filter(c=>c.id!==id));}
+  function assignRest(courierId,restId){
+    setCouriers(p=>p.map(c=>{
+      if(c.id!==courierId)return c;
+      const already=c.assignments.find(a=>a.restId===restId);
+      const asgn=already?c.assignments.filter(a=>a.restId!==restId):[...c.assignments,{restId,since:timeNow()}];
+      return{...c,assignments:asgn,status:asgn.length===0?"free":asgn.length>=2?"busy":"delivering"};
+    }));
+  }
+  function setCStatus(id,status){setCouriers(p=>p.map(c=>c.id===id?{...c,status}:c));}
+
+  // Заказы
+  function addOrderForm(){
+    if(!nOrder.clientPhone.trim()||!nOrder.clientAddress.trim())return;
+    const o={id:generateId(),...nOrder,restId:nOrder.restId?Number(nOrder.restId):null,courierId:nOrder.courierId?Number(nOrder.courierId):null,status:"new",createdAt:timeNow(),fromRestaurant:false};
+    setOrders(p=>[o,...p]);setNOrder({clientPhone:"",clientAddress:"",restId:"",courierId:"",note:""});setShowAddOrder(false);sf("Заказ добавлен ✓");
+  }
+  function setOStatus(id,s){setOrders(p=>p.map(o=>o.id===id?{...o,status:s}:o));}
+  function delOrder(id){setOrders(p=>p.filter(o=>o.id!==id));}
+  function updOrder(id,f,v){setOrders(p=>p.map(o=>o.id===id?{...o,[f]:v}:o));}
+  const couriersOfRest=rid=>couriers.filter(c=>c.assignments.find(a=>a.restId===rid));
+
+  const TABS=[
+    {key:"dashboard",label:"Обзор"},
+    {key:"orders",label:`Заказы${activeOrders.length?` (${activeOrders.length})`:""}`,badge:newOrders.length},
+    {key:"couriers",label:"Курьеры"},
+    {key:"restaurants",label:"Рестораны"},
+  ];
+
+  return(
+    <div style={{minHeight:"100vh",background:BG,fontFamily:"'Manrope','Segoe UI',sans-serif",color:TEXT}}>
+      {/* HEADER */}
+      <header style={{position:"sticky",top:0,zIndex:50,background:Y,boxShadow:"0 2px 12px rgba(0,0,0,0.12)",padding:"0 24px",height:60,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <div style={{width:34,height:34,borderRadius:10,background:TEXT,display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,fontWeight:900,color:Y}}>B</div>
+          <div>
+            <div style={{fontSize:16,fontWeight:900,letterSpacing:"-0.5px",color:TEXT,lineHeight:1}}>Balance</div>
+            <div style={{fontSize:9,color:"rgba(0,0,0,0.45)",letterSpacing:"0.8px",textTransform:"uppercase"}}>Батуми · Доставка</div>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:2,alignItems:"center"}}>
+          {TABS.map(t=>(
+            <button key={t.key} onClick={()=>setTab(t.key)} style={{position:"relative",padding:"6px 14px",borderRadius:8,border:"none",cursor:"pointer",fontSize:13,fontWeight:700,background:tab===t.key?"rgba(0,0,0,0.12)":"transparent",color:TEXT,transition:"background 0.15s"}}>
+              {t.label}
+              {t.badge>0&&<span style={{position:"absolute",top:4,right:4,width:7,height:7,borderRadius:"50%",background:RED}}/>}
+            </button>
+          ))}
+          <a href="#restaurant" style={{marginLeft:8,padding:"7px 14px",borderRadius:8,border:`2px solid ${TEXT}`,background:"transparent",color:TEXT,fontSize:12,fontWeight:800,textDecoration:"none"}}>🏪 Ресторан</a>
+        </div>
+      </header>
+
+      {flash&&<div style={{position:"fixed",top:72,left:"50%",transform:"translateX(-50%)",background:TEXT,color:Y,padding:"10px 28px",borderRadius:12,fontWeight:800,fontSize:14,zIndex:200,boxShadow:"0 8px 24px rgba(0,0,0,0.2)",whiteSpace:"nowrap"}}>{flash}</div>}
+
+      <main style={{padding:"28px 24px",maxWidth:960,margin:"0 auto"}}>
+
+        {/* ОБЗОР */}
+        {tab==="dashboard"&&(
+          <div>
+            <h1 style={{fontSize:24,fontWeight:900,marginBottom:20,letterSpacing:"-0.5px"}}>Текущая смена</h1>
+
+            {newOrders.length>0&&(
+              <div onClick={()=>setTab("orders")} style={{cursor:"pointer",background:Y,border:`2px solid ${TEXT}`,borderRadius:14,padding:"14px 20px",marginBottom:24,display:"flex",alignItems:"center",gap:14,boxShadow:"3px 3px 0 "+TEXT}}>
+                <span style={{fontSize:24}}>🔔</span>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:15,fontWeight:900,color:TEXT}}>Новых заказов: {newOrders.length}</div>
+                  <div style={{fontSize:12,color:"rgba(0,0,0,0.5)",marginTop:2}}>Нажмите чтобы принять</div>
+                </div>
+                <span style={{fontSize:18,fontWeight:900}}>→</span>
+              </div>
+            )}
+
+            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14,marginBottom:28}}>
+              {[
+                {label:"Ресторанов",value:`${activeRests.length}/10`,icon:"🏪"},
+                {label:"Курьеров",value:`${couriers.filter(c=>c.status!=="free").length}/${couriers.length}`,icon:"🛵"},
+                {label:"Активных заказов",value:activeOrders.length,icon:"📦"},
+                {label:"Доставлено",value:orders.filter(o=>o.status==="done").length,icon:"✅"},
+              ].map(s=>(
+                <div key={s.label} style={{background:CARD,border:`2px solid ${BORDER}`,borderRadius:14,padding:"18px 20px",boxShadow:"2px 2px 0 "+BORDER}}>
+                  <div style={{fontSize:22}}>{s.icon}</div>
+                  <div style={{fontSize:28,fontWeight:900,lineHeight:1.1,marginTop:8,color:TEXT}}>{s.value}</div>
+                  <div style={{fontSize:11,color:MUTED,marginTop:4,fontWeight:600}}>{s.label}</div>
+                </div>
+              ))}
+            </div>
+
+            <h2 style={{fontSize:15,fontWeight:800,marginBottom:14,color:MUTED,textTransform:"uppercase",letterSpacing:"0.5px"}}>Курьеры</h2>
+            <div style={{display:"flex",flexDirection:"column",gap:12,marginBottom:28}}>
+              {couriers.map(c=>{
+                const aR=c.assignments.map(a=>restaurants.find(r=>r.id===a.restId)).filter(Boolean);
+                const cO=activeOrders.filter(o=>o.courierId===c.id);
+                const sc=STATUSES[c.status];
+                return(
+                  <div key={c.id} style={{background:CARD,border:`2px solid ${BORDER}`,borderRadius:16,padding:20,boxShadow:"2px 2px 0 "+BORDER}}>
+                    <div style={{display:"flex",alignItems:"center",gap:14}}>
+                      <div style={{width:46,height:46,borderRadius:"50%",flexShrink:0,background:Y,border:`3px solid ${TEXT}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,fontWeight:900,color:TEXT}}>{c.avatar}</div>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:16,fontWeight:900}}>{c.name}</div>
+                        {c.phone&&<div style={{fontSize:12,color:MUTED}}>{c.phone}</div>}
+                      </div>
+                      <div style={{padding:"4px 12px",borderRadius:20,fontSize:12,fontWeight:700,background:sc.color,color:"#fff"}}>{sc.label}</div>
+                      <button onClick={()=>setShowAssign(c.id)} style={{padding:"7px 14px",borderRadius:8,border:`2px solid ${TEXT}`,background:Y,color:TEXT,cursor:"pointer",fontSize:13,fontWeight:800}}>+ Ресторан</button>
+                    </div>
+                    <div style={{marginTop:12,display:"flex",gap:8,flexWrap:"wrap"}}>
+                      {aR.map(r=>{
+                        const ass=c.assignments.find(a=>a.restId===r.id);
+                        return(
+                          <div key={r.id} style={{display:"flex",alignItems:"center",gap:7,background:r.color+"18",border:`1.5px solid ${r.color}`,borderRadius:8,padding:"5px 10px"}}>
+                            <div style={{width:7,height:7,borderRadius:"50%",background:r.color}}/>
+                            <span style={{fontSize:12,fontWeight:800,color:r.color}}>{r.name}</span>
+                            <span style={{fontSize:10,color:MUTED}}>с {ass?.since}</span>
+                            <button onClick={()=>assignRest(c.id,r.id)} style={{background:"none",border:"none",color:MUTED,cursor:"pointer",fontSize:13,padding:0,lineHeight:1}}>×</button>
+                          </div>
+                        );
+                      })}
+                      {cO.map(o=>(
+                        <div key={o.id} onClick={()=>setTab("orders")} style={{display:"flex",alignItems:"center",gap:7,background:"#fff8e1",border:"1.5px solid "+Y,borderRadius:8,padding:"5px 10px",cursor:"pointer"}}>
+                          <span style={{fontSize:11}}>📦</span>
+                          <span style={{fontSize:12,fontWeight:700}}>{o.clientAddress.slice(0,18)}{o.clientAddress.length>18?"…":""}</span>
+                          <span style={{fontSize:10,color:ORDER_STATUSES[o.status].color,fontWeight:700}}>{ORDER_STATUSES[o.status].label}</span>
+                        </div>
+                      ))}
+                      {aR.length===0&&cO.length===0&&<span style={{fontSize:12,color:MUTED}}>Ничего не назначено</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ЗАКАЗЫ */}
+        {tab==="orders"&&(
+          <div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+              <div>
+                <h1 style={{fontSize:24,fontWeight:900,letterSpacing:"-0.5px"}}>Заказы</h1>
+                <div style={{fontSize:12,color:MUTED,marginTop:2,fontWeight:600}}>{activeOrders.length} активных · {orders.filter(o=>o.status==="done").length} доставлено</div>
+              </div>
+              <Btn onClick={()=>setShowAddOrder(true)}>+ Новый заказ</Btn>
+            </div>
+            {orders.length===0&&<Empty icon="📦" text="Заказов пока нет"/>}
+            <div style={{display:"flex",flexDirection:"column",gap:12}}>
+              {orders.map(order=>{
+                const rest=restaurants.find(r=>r.id===order.restId);
+                const courier=couriers.find(c=>c.id===order.courierId);
+                const st=ORDER_STATUSES[order.status];
+                return(
+                  <div key={order.id} style={{background:CARD,border:`2px solid ${order.status==="new"&&order.fromRestaurant?Y:BORDER}`,borderRadius:16,padding:20,boxShadow:order.status==="new"&&order.fromRestaurant?`3px 3px 0 ${Y}`:`2px 2px 0 ${BORDER}`}}>
+                    {order.fromRestaurant&&<div style={{display:"inline-block",marginBottom:10,padding:"3px 10px",borderRadius:20,fontSize:11,fontWeight:800,background:Y,color:TEXT}}>🏪 от ресторана</div>}
+                    <div style={{display:"flex",gap:14,alignItems:"flex-start"}}>
+                      <div style={{flex:1}}>
+                        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,flexWrap:"wrap"}}>
+                          <span style={{padding:"3px 10px",borderRadius:20,fontSize:12,fontWeight:700,background:st.color,color:"#fff"}}>{st.label}</span>
+                          <span style={{fontSize:12,color:MUTED}}>в {order.createdAt}</span>
+                        </div>
+                        <div style={{display:"flex",gap:20,flexWrap:"wrap"}}>
+                          <div>
+                            <div style={{fontSize:10,color:MUTED,marginBottom:4,textTransform:"uppercase",letterSpacing:"0.5px",fontWeight:700}}>Телефон</div>
+                            <a href={`tel:${order.clientPhone}`} style={{display:"inline-flex",alignItems:"center",gap:7,padding:"7px 14px",borderRadius:8,background:GREEN,color:"#fff",fontSize:14,fontWeight:800,textDecoration:"none"}}>📞 {order.clientPhone}</a>
+                          </div>
+                          <div>
+                            <div style={{fontSize:10,color:MUTED,marginBottom:4,textTransform:"uppercase",letterSpacing:"0.5px",fontWeight:700}}>Адрес</div>
+                            <div style={{fontSize:15,fontWeight:700}}>📍 {order.clientAddress}</div>
+                          </div>
+                        </div>
+                        {order.note&&<div style={{marginTop:8,fontSize:13,color:MUTED,fontStyle:"italic"}}>💬 {order.note}</div>}
+                        <div style={{display:"flex",gap:8,marginTop:10,flexWrap:"wrap",alignItems:"center"}}>
+                          {rest&&<span style={{padding:"3px 10px",borderRadius:8,fontSize:12,fontWeight:800,background:rest.color,color:"#fff"}}>{rest.name}</span>}
+                          {courier&&<span style={{padding:"3px 10px",borderRadius:8,fontSize:12,fontWeight:800,background:"#fff8e1",color:TEXT,border:`1.5px solid ${Y}`}}>🛵 {courier.name}</span>}
+                          {!courier&&order.status==="new"&&<span style={{fontSize:12,color:MUTED,fontWeight:600}}>⏳ Ждёт курьера</span>}
+                        </div>
+                      </div>
+                      <div style={{display:"flex",flexDirection:"column",gap:6,flexShrink:0}}>
+                        <SmBtn onClick={()=>setShowEditOrder(order.id)}>Изменить</SmBtn>
+                        {order.status!=="done"&&order.status!=="cancelled"&&<SmBtn green onClick={()=>setOStatus(order.id,"done")}>✓ Доставлен</SmBtn>}
+                        <SmBtn red onClick={()=>delOrder(order.id)}>Удалить</SmBtn>
+                      </div>
+                    </div>
+                    <div style={{marginTop:12,display:"flex",gap:6,flexWrap:"wrap"}}>
+                      {Object.entries(ORDER_STATUSES).map(([key,s])=>(
+                        <button key={key} onClick={()=>setOStatus(order.id,key)} style={{padding:"4px 10px",borderRadius:8,border:`1.5px solid ${order.status===key?s.color:BORDER}`,background:order.status===key?s.color:"transparent",color:order.status===key?"#fff":MUTED,cursor:"pointer",fontSize:11,fontWeight:700}}>{s.label}</button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* КУРЬЕРЫ */}
+        {tab==="couriers"&&(
+          <div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+              <h1 style={{fontSize:24,fontWeight:900,letterSpacing:"-0.5px"}}>Курьеры</h1>
+              <Btn onClick={()=>setShowAddCourier(true)}>+ Добавить</Btn>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              {couriers.map(c=>{
+                const sc=STATUSES[c.status];
+                return(
+                  <div key={c.id} style={{background:CARD,border:`2px solid ${BORDER}`,borderRadius:14,padding:"16px 20px",display:"flex",alignItems:"center",gap:14,boxShadow:`2px 2px 0 ${BORDER}`}}>
+                    <div style={{width:42,height:42,borderRadius:"50%",flexShrink:0,background:Y,border:`3px solid ${TEXT}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,fontWeight:900,color:TEXT}}>{c.avatar}</div>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:16,fontWeight:900}}>{c.name}</div>
+                      {c.phone&&<div style={{fontSize:12,color:MUTED}}>{c.phone}</div>}
+                    </div>
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                      {Object.entries(STATUSES).map(([key,s])=>(
+                        <button key={key} onClick={()=>setCStatus(c.id,key)} style={{padding:"5px 10px",borderRadius:8,border:`1.5px solid ${c.status===key?s.color:BORDER}`,background:c.status===key?s.color:"transparent",color:c.status===key?"#fff":MUTED,cursor:"pointer",fontSize:12,fontWeight:700}}>{s.label}</button>
+                      ))}
+                    </div>
+                    <SmBtn red onClick={()=>removeCourier(c.id)}>Удалить</SmBtn>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* РЕСТОРАНЫ */}
+        {tab==="restaurants"&&(
+          <div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+              <div>
+                <h1 style={{fontSize:24,fontWeight:900,letterSpacing:"-0.5px"}}>Рестораны</h1>
+                <div style={{fontSize:12,color:MUTED,marginTop:2,fontWeight:600}}>{activeRests.length}/10</div>
+              </div>
+              <Btn onClick={()=>setShowAddRest(true)} disabled={activeRests.length>=10}>+ Добавить</Btn>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              {activeRests.map(r=>(
+                <div key={r.id} style={{background:CARD,border:`2px solid ${BORDER}`,borderRadius:14,padding:"14px 20px",display:"flex",alignItems:"center",gap:14,boxShadow:`2px 2px 0 ${BORDER}`}}>
+                  <div style={{width:12,height:12,borderRadius:"50%",background:r.color,flexShrink:0,border:`2px solid ${r.color}`}}/>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:15,fontWeight:900}}>{r.name}</div>
+                    {(r.cuisine||r.address||r.phone)&&(
+                      <div style={{fontSize:12,color:MUTED,marginTop:2}}>
+                        {r.cuisine}{r.cuisine&&(r.address||r.phone)?" · ":""}
+                        {r.address&&`📍 ${r.address}`}
+                        {r.address&&r.phone?" · ":""}
+                        {r.phone&&`📞 ${r.phone}`}
+                      </div>
+                    )}
+                  </div>
+                  <div style={{display:"flex",gap:6}}>
+                    {couriersOfRest(r.id).map(c=>(
+                      <span key={c.id} style={{padding:"3px 10px",borderRadius:8,fontSize:12,fontWeight:700,background:Y,color:TEXT}}>{c.name}</span>
+                    ))}
+                  </div>
+                  <SmBtn onClick={()=>setShowEditRest({...r})}>Изменить</SmBtn>
+                  <SmBtn red onClick={()=>removeRest(r.id)}>Удалить</SmBtn>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </main>
+
+      {/* МОДАЛКИ */}
+      {showAddOrder&&(
+        <Modal title="Новый заказ" onClose={()=>setShowAddOrder(false)}>
+          <FI label="Телефон клиента *" value={nOrder.clientPhone} onChange={v=>setNOrder(p=>({...p,clientPhone:v}))} placeholder="+995 599 ..."/>
+          <FI label="Адрес доставки *" value={nOrder.clientAddress} onChange={v=>setNOrder(p=>({...p,clientAddress:v}))} placeholder="Улица, дом, квартира"/>
+          <FS label="Ресторан" value={nOrder.restId} onChange={v=>setNOrder(p=>({...p,restId:v}))} opts={activeRests.map(r=>({v:r.id,l:r.name}))} ph="— Выбрать ресторан —"/>
+          <FS label="Курьер"   value={nOrder.courierId} onChange={v=>setNOrder(p=>({...p,courierId:v}))} opts={couriers.map(c=>({v:c.id,l:c.name}))} ph="— Выбрать курьера —"/>
+          <FI label="Примечание" value={nOrder.note} onChange={v=>setNOrder(p=>({...p,note:v}))} placeholder="Код домофона, этаж..."/>
+          <Btn onClick={addOrderForm}>Добавить заказ</Btn>
+        </Modal>
+      )}
+      {showEditOrder!==null&&(()=>{
+        const order=orders.find(o=>o.id===showEditOrder);if(!order)return null;
+        return(
+          <Modal title="Редактировать заказ" onClose={()=>setShowEditOrder(null)}>
+            <FI label="Телефон клиента" value={order.clientPhone} onChange={v=>updOrder(order.id,"clientPhone",v)} placeholder="+995 599 ..."/>
+            <FI label="Адрес доставки" value={order.clientAddress} onChange={v=>updOrder(order.id,"clientAddress",v)} placeholder="Адрес"/>
+            <FS label="Ресторан" value={order.restId||""} onChange={v=>updOrder(order.id,"restId",v?Number(v):null)} opts={activeRests.map(r=>({v:r.id,l:r.name}))} ph="— Выбрать ресторан —"/>
+            <FS label="Курьер"   value={order.courierId||""} onChange={v=>updOrder(order.id,"courierId",v?Number(v):null)} opts={couriers.map(c=>({v:c.id,l:c.name}))} ph="— Выбрать курьера —"/>
+            <FI label="Примечание" value={order.note} onChange={v=>updOrder(order.id,"note",v)} placeholder="Примечание"/>
+            <Btn onClick={()=>setShowEditOrder(null)}>Сохранить</Btn>
+          </Modal>
+        );
+      })()}
+      {showAddRest&&(
+        <Modal title="Новый ресторан" onClose={()=>setShowAddRest(false)}>
+          <FI label="Название *" value={nRest.name}    onChange={v=>setNRest(p=>({...p,name:v}))}    placeholder="Название"/>
+          <FI label="Телефон"   value={nRest.phone}   onChange={v=>setNRest(p=>({...p,phone:v}))}   placeholder="+995 599 ..."/>
+          <FI label="Адрес"     value={nRest.address} onChange={v=>setNRest(p=>({...p,address:v}))} placeholder="Адрес"/>
+          <FI label="Кухня"     value={nRest.cuisine} onChange={v=>setNRest(p=>({...p,cuisine:v}))} placeholder="Грузинская..."/>
+          <Btn onClick={addRest}>Добавить</Btn>
+        </Modal>
+      )}
+      {showAddCourier&&(
+        <Modal title="Новый курьер" onClose={()=>setShowAddCourier(false)}>
+          <FI label="Имя *"    value={nCourier.name}  onChange={v=>setNCourier(p=>({...p,name:v}))}  placeholder="Имя"/>
+          <FI label="Телефон" value={nCourier.phone} onChange={v=>setNCourier(p=>({...p,phone:v}))} placeholder="+995 599 ..."/>
+          <Btn onClick={addCourier}>Добавить</Btn>
+        </Modal>
+      )}
+      {showEditRest&&(
+        <Modal title="Редактировать ресторан" onClose={()=>setShowEditRest(null)}>
+          <FI label="Название" value={showEditRest.name}       onChange={v=>setShowEditRest(p=>({...p,name:v}))}    placeholder="Название"/>
+          <FI label="Телефон"  value={showEditRest.phone||""}  onChange={v=>setShowEditRest(p=>({...p,phone:v}))}   placeholder="+995 599 ..."/>
+          <FI label="Адрес"    value={showEditRest.address||""}onChange={v=>setShowEditRest(p=>({...p,address:v}))} placeholder="Адрес"/>
+          <FI label="Кухня"    value={showEditRest.cuisine||""}onChange={v=>setShowEditRest(p=>({...p,cuisine:v}))} placeholder="Грузинская..."/>
+          <Btn onClick={()=>{updateRest(showEditRest.id,{name:showEditRest.name,phone:showEditRest.phone,address:showEditRest.address,cuisine:showEditRest.cuisine});setShowEditRest(null);sf("Ресторан обновлён ✓");}}>Сохранить</Btn>
+        </Modal>
+      )}
+      {showAssign!==null&&(
+        <Modal title="Назначить рестораны" onClose={()=>setShowAssign(null)}>
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {activeRests.map(r=>{
+              const courier=couriers.find(c=>c.id===showAssign);
+              const assigned=courier?.assignments.find(a=>a.restId===r.id);
+              return(
+                <button key={r.id} onClick={()=>assignRest(showAssign,r.id)} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",borderRadius:10,border:`2px solid ${assigned?r.color:BORDER}`,background:assigned?r.color+"18":"transparent",cursor:"pointer",textAlign:"left"}}>
+                  <div style={{width:9,height:9,borderRadius:"50%",background:r.color,flexShrink:0}}/>
+                  <div style={{flex:1,fontSize:14,fontWeight:700,color:TEXT}}>{r.name}</div>
+                  {assigned&&<span style={{fontSize:16,color:r.color}}>✓</span>}
+                </button>
+              );
+            })}
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ПАНЕЛЬ РЕСТОРАНА  (#restaurant)
+// ══════════════════════════════════════════════════════════════════════════════
+function RestaurantApp(){
+  const [orders,setOrders]=useSharedOrders();
+  const [restaurants]=useSharedRestaurants();
+  const [selectedRest,setSelectedRest]=useState(null);
+  const [form,setForm]=useState({clientPhone:"",clientAddress:"",note:""});
+  const [sent,setSent]=useState(false);
+  const activeRests=restaurants.filter(r=>r.active);
+
+  function submit(){
+    if(!selectedRest||!form.clientPhone.trim()||!form.clientAddress.trim())return;
+    const o={id:generateId(),clientPhone:form.clientPhone,clientAddress:form.clientAddress,note:form.note,restId:selectedRest.id,courierId:null,status:"new",createdAt:timeNow(),fromRestaurant:true};
+    setOrders(p=>[o,...p]);
+    setSent(true);
+    setTimeout(()=>{setSent(false);setForm({clientPhone:"",clientAddress:"",note:""});setSelectedRest(null);},3000);
+  }
+
+  return(
+    <div style={{minHeight:"100vh",background:BG,fontFamily:"'Manrope','Segoe UI',sans-serif",color:TEXT}}>
+      <header style={{position:"sticky",top:0,zIndex:50,background:Y,boxShadow:"0 2px 12px rgba(0,0,0,0.12)",padding:"0 24px",height:60,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <div style={{width:34,height:34,borderRadius:10,background:TEXT,display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,fontWeight:900,color:Y}}>B</div>
+          <div>
+            <div style={{fontSize:16,fontWeight:900,letterSpacing:"-0.5px",color:TEXT,lineHeight:1}}>Balance</div>
+            <div style={{fontSize:9,color:"rgba(0,0,0,0.45)",letterSpacing:"0.8px",textTransform:"uppercase"}}>Панель ресторана</div>
+          </div>
+        </div>
+        <a href="#courier" style={{padding:"7px 14px",borderRadius:8,border:`2px solid ${TEXT}`,background:"transparent",color:TEXT,fontSize:12,fontWeight:800,textDecoration:"none"}}>🛵 Панель курьера</a>
+      </header>
+
+      <main style={{padding:"28px 24px",maxWidth:540,margin:"0 auto"}}>
+        {sent?(
+          <div style={{textAlign:"center",padding:"80px 0"}}>
+            <div style={{fontSize:72,marginBottom:16}}>✅</div>
+            <div style={{fontSize:24,fontWeight:900}}>Заказ отправлен!</div>
+            <div style={{fontSize:14,color:MUTED,marginTop:8,fontWeight:600}}>Курьер уже видит его в приложении</div>
+          </div>
+        ):(
+          <div style={{display:"flex",flexDirection:"column",gap:24}}>
+            <div>
+              <h1 style={{fontSize:22,fontWeight:900,marginBottom:4}}>Новый заказ</h1>
+              <div style={{fontSize:13,color:MUTED,fontWeight:600}}>Выберите ресторан и заполните данные клиента</div>
+            </div>
+
+            <div>
+              <div style={{fontSize:11,color:MUTED,fontWeight:800,marginBottom:10,textTransform:"uppercase",letterSpacing:"0.5px"}}>Ваш ресторан</div>
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {activeRests.map(r=>(
+                  <button key={r.id} onClick={()=>setSelectedRest(r)} style={{display:"flex",alignItems:"center",gap:12,padding:"14px 16px",borderRadius:12,border:`2px solid ${selectedRest?.id===r.id?r.color:BORDER}`,background:selectedRest?.id===r.id?r.color+"15":CARD,cursor:"pointer",textAlign:"left",boxShadow:selectedRest?.id===r.id?`2px 2px 0 ${r.color}`:`2px 2px 0 ${BORDER}`}}>
+                    <div style={{width:10,height:10,borderRadius:"50%",background:r.color,flexShrink:0}}/>
+                    <div style={{flex:1,fontSize:15,fontWeight:800,color:TEXT}}>{r.name}</div>
+                    {selectedRest?.id===r.id&&<span style={{fontSize:16,color:r.color,fontWeight:900}}>✓</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {selectedRest&&(
+              <>
+                <div style={{height:2,background:BORDER,borderRadius:2}}/>
+                <div>
+                  <div style={{fontSize:11,color:MUTED,fontWeight:800,marginBottom:12,textTransform:"uppercase",letterSpacing:"0.5px"}}>Данные клиента</div>
+                  <div style={{display:"flex",flexDirection:"column",gap:14}}>
+                    <RI label="Телефон клиента *"   value={form.clientPhone}   onChange={v=>setForm(p=>({...p,clientPhone:v}))}   placeholder="+995 599 ..." type="tel"/>
+                    <RI label="Адрес доставки *"    value={form.clientAddress} onChange={v=>setForm(p=>({...p,clientAddress:v}))} placeholder="Улица, дом, квартира"/>
+                    <RI label="Примечание"          value={form.note}          onChange={v=>setForm(p=>({...p,note:v}))}           placeholder="Код домофона, этаж, ориентир..."/>
+                  </div>
+                </div>
+                <button onClick={submit} disabled={!form.clientPhone.trim()||!form.clientAddress.trim()} style={{padding:"16px 24px",borderRadius:12,border:`3px solid ${TEXT}`,background:(!form.clientPhone.trim()||!form.clientAddress.trim())?"#e0e0e0":Y,color:(!form.clientPhone.trim()||!form.clientAddress.trim())?MUTED:TEXT,cursor:(!form.clientPhone.trim()||!form.clientAddress.trim())?"not-allowed":"pointer",fontSize:16,fontWeight:900,boxShadow:(!form.clientPhone.trim()||!form.clientAddress.trim())?"none":`4px 4px 0 ${TEXT}`}}>
+                  📦 Отправить заказ курьеру
+                </button>
+              </>
+            )}
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}
+
+// ── ПЕРЕИСПОЛЬЗУЕМЫЕ КОМПОНЕНТЫ ──────────────────────────────────────────────
+function Modal({title,onClose,children}){
+  return(
+    <div style={{position:"fixed",inset:0,zIndex:100,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",padding:24}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{background:CARD,border:`3px solid ${TEXT}`,borderRadius:20,padding:28,width:"100%",maxWidth:440,boxShadow:`6px 6px 0 ${TEXT}`,maxHeight:"90vh",overflowY:"auto"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:22}}>
+          <h2 style={{fontSize:20,fontWeight:900,margin:0}}>{title}</h2>
+          <button onClick={onClose} style={{background:Y,border:`2px solid ${TEXT}`,borderRadius:8,width:32,height:32,cursor:"pointer",fontSize:18,fontWeight:900,display:"flex",alignItems:"center",justifyContent:"center",color:TEXT}}>×</button>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:14}}>{children}</div>
+      </div>
+    </div>
+  );
+}
+function FI({label,value,onChange,placeholder,type="text"}){
+  return(
+    <div>
+      <label style={{fontSize:12,color:MUTED,fontWeight:700,display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.4px"}}>{label}</label>
+      <input type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} style={{width:"100%",padding:"11px 14px",borderRadius:10,background:BG,border:`2px solid ${BORDER}`,color:TEXT,fontSize:14,outline:"none",boxSizing:"border-box",fontWeight:600}}/>
+    </div>
+  );
+}
+function FS({label,value,onChange,opts,ph}){
+  return(
+    <div>
+      <label style={{fontSize:12,color:MUTED,fontWeight:700,display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.4px"}}>{label}</label>
+      <select value={value||""} onChange={e=>onChange(e.target.value)} style={{width:"100%",padding:"11px 14px",borderRadius:10,background:BG,border:`2px solid ${BORDER}`,color:TEXT,fontSize:14,outline:"none",boxSizing:"border-box",fontWeight:600}}>
+        <option value="">{ph}</option>
+        {opts.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
+      </select>
+    </div>
+  );
+}
+function RI({label,value,onChange,placeholder,type="text"}){
+  return(
+    <div>
+      <label style={{fontSize:12,color:MUTED,fontWeight:700,display:"block",marginBottom:8,textTransform:"uppercase",letterSpacing:"0.4px"}}>{label}</label>
+      <input type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} style={{width:"100%",padding:"13px 16px",borderRadius:10,background:BG,border:`2px solid ${BORDER}`,color:TEXT,fontSize:15,outline:"none",boxSizing:"border-box",fontWeight:600}}/>
+    </div>
+  );
+}
+function Btn({onClick,children,disabled}){
+  return <button onClick={onClick} disabled={disabled} style={{padding:"10px 20px",borderRadius:10,border:`2px solid ${disabled?"#ccc":TEXT}`,background:disabled?"#e0e0e0":Y,color:disabled?MUTED:TEXT,cursor:disabled?"not-allowed":"pointer",fontSize:14,fontWeight:800,boxShadow:disabled?"none":`3px 3px 0 ${TEXT}`}}>{children}</button>;
+}
+function SmBtn({onClick,children,red,green}){
+  const bg=red?RED:green?GREEN:CARD;
+  const cl=red||green?"#fff":TEXT;
+  const br=red?RED:green?GREEN:BORDER;
+  return <button onClick={onClick} style={{padding:"6px 12px",borderRadius:8,border:`1.5px solid ${br}`,background:bg,color:cl,cursor:"pointer",fontSize:12,fontWeight:700}}>{children}</button>;
+}
+function Empty({icon,text}){
+  return <div style={{textAlign:"center",padding:"60px 0",color:MUTED}}><div style={{fontSize:40,marginBottom:12}}>{icon}</div><div style={{fontSize:15,fontWeight:700}}>{text}</div></div>;
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(React.createElement(React.StrictMode, null, React.createElement(App)));
+  </script>
+</body>
+</html>
